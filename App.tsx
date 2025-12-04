@@ -30,7 +30,16 @@ const App: React.FC = () => {
   const [currentCalendarDate, setCurrentCalendarDate] = useState(new Date());
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission | 'unsupported'>('default');
   const [installPrompt, setInstallPrompt] = useState<any>(null);
-  const [isIOS, setIsIOS] = useState(false);
+  
+  // Detect iOS
+  const isIOS = useMemo(() => {
+    return /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
+  }, []);
+  
+  // Detect Standalone (Installed) Mode
+  const isStandalone = useMemo(() => {
+    return (window.navigator as any).standalone || (window.matchMedia('(display-mode: standalone)').matches);
+  }, []);
 
   // Load data on mount
   useEffect(() => {
@@ -38,10 +47,6 @@ const App: React.FC = () => {
     setReminders(data);
     setNotificationPermission(getNotificationPermissionState());
     
-    // Check OS
-    const isIOSCheck = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
-    setIsIOS(isIOSCheck);
-
     const hour = new Date().getHours();
     if (hour < 12) setGreeting('Good Morning, Barbie!');
     else if (hour < 18) setGreeting('Good Afternoon, Barbie!');
@@ -75,8 +80,7 @@ const App: React.FC = () => {
           const due = new Date(r.dueDateTime);
           const timeDiff = now.getTime() - due.getTime();
 
-          // Check if due time is in the past, but within the last minute (to avoid spamming old tasks)
-          // Or if it's just becoming due now
+          // Check if due time is in the past, but within the last minute
           if (timeDiff >= 0 && timeDiff < 60000) {
              sendNotification(`It's time! ✨`, r.title);
              hasUpdates = true;
@@ -94,10 +98,19 @@ const App: React.FC = () => {
   }, [notificationPermission]);
 
   const handleRequestPermission = async () => {
+    // Special Warning for iOS users who haven't installed the app
+    if (isIOS && !isStandalone) {
+      alert("💖 Note for iPhone: Notifications only work if you add this app to your Home Screen first!");
+      setIsHelpOpen(true);
+      return;
+    }
+
     const granted = await requestNotificationPermission();
     setNotificationPermission(granted ? 'granted' : 'denied');
     if (granted) {
       sendNotification("Notifications enabled! 💖", "You'll now be notified when your sparkles are due.");
+    } else {
+      alert("Notifications were blocked. Please enable them in your browser settings to get reminded! ✨");
     }
   };
 
@@ -502,6 +515,12 @@ const App: React.FC = () => {
         title="Get the App 📱"
       >
         <div className="space-y-6 text-barbie-neutral">
+           {isIOS && !isStandalone && (
+             <div className="bg-barbie-pink/10 border border-barbie-pink text-barbie-deep p-4 rounded-xl text-sm font-semibold">
+               ⚠️ Important: On iPhone, you MUST add this app to your Home Screen for notifications to work!
+             </div>
+           )}
+
            <p className="text-sm text-barbie-muted">
              BarbieRemind is a web app that you can add directly to your home screen! No download store required.
            </p>

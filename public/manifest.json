@@ -1,0 +1,21 @@
+{
+  "short_name": "BarbieRemind",
+  "name": "BarbieRemind Sparkle App",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/2936/2936956.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/2936/2936956.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ],
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#FF69B4",
+  "background_color": "#FFF6F9",
+  "orientation": "portrait"
+}
