@@ -1,17 +1,19 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Reminder, ReminderFormData, ViewState } from './types';
 import { loadReminders, saveReminders, generateId } from './services/storage';
+import { requestNotificationPermission, sendNotification, getNotificationPermissionState } from './services/notifications';
 import { Navigation } from './components/Navigation';
 import { ReminderCard } from './components/ReminderCard';
 import { Modal } from './components/Modal';
 import { ReminderEditor } from './components/ReminderEditor';
-import { Plus, Calendar as CalendarIcon, Sparkles, Search, ChevronLeft, ChevronRight, Trophy } from 'lucide-react';
+import { Plus, Calendar as CalendarIcon, Sparkles, Search, ChevronLeft, ChevronRight, Trophy, Bell, BellOff, Download, HelpCircle, Share, MoreVertical, PlusSquare } from 'lucide-react';
 import { format, isSameDay, endOfMonth, eachDayOfInterval, isSameMonth, endOfWeek, addMonths } from 'date-fns';
 
 // Declare confetti on window for TypeScript
 declare global {
   interface Window {
     confetti: any;
+    deferredPrompt: any;
   }
 }
 
@@ -19,22 +21,37 @@ const App: React.FC = () => {
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [view, setView] = useState<ViewState>('today');
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [editingReminder, setEditingReminder] = useState<Reminder | undefined>(undefined);
   const [greeting, setGreeting] = useState('');
   
   // New States
   const [searchQuery, setSearchQuery] = useState('');
   const [currentCalendarDate, setCurrentCalendarDate] = useState(new Date());
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission | 'unsupported'>('default');
+  const [installPrompt, setInstallPrompt] = useState<any>(null);
+  const [isIOS, setIsIOS] = useState(false);
 
   // Load data on mount
   useEffect(() => {
     const data = loadReminders();
     setReminders(data);
+    setNotificationPermission(getNotificationPermissionState());
     
+    // Check OS
+    const isIOSCheck = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
+    setIsIOS(isIOSCheck);
+
     const hour = new Date().getHours();
     if (hour < 12) setGreeting('Good Morning, Barbie!');
     else if (hour < 18) setGreeting('Good Afternoon, Barbie!');
     else setGreeting('Good Evening, Barbie!');
+
+    // PWA Install Prompt Listener
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      setInstallPrompt(e);
+    });
   }, []);
 
   // Save data on change
@@ -42,12 +59,69 @@ const App: React.FC = () => {
     saveReminders(reminders);
   }, [reminders]);
 
+  // Notification Checker Interval
+  useEffect(() => {
+    if (notificationPermission !== 'granted') return;
+
+    const intervalId = setInterval(() => {
+      const now = new Date();
+      
+      setReminders(currentReminders => {
+        let hasUpdates = false;
+        
+        const updatedReminders = currentReminders.map(r => {
+          if (r.isCompleted || r.wasNotified) return r;
+
+          const due = new Date(r.dueDateTime);
+          const timeDiff = now.getTime() - due.getTime();
+
+          // Check if due time is in the past, but within the last minute (to avoid spamming old tasks)
+          // Or if it's just becoming due now
+          if (timeDiff >= 0 && timeDiff < 60000) {
+             sendNotification(`It's time! ✨`, r.title);
+             hasUpdates = true;
+             return { ...r, wasNotified: true };
+          }
+          return r;
+        });
+
+        return hasUpdates ? updatedReminders : currentReminders;
+      });
+
+    }, 10000); // Check every 10 seconds
+
+    return () => clearInterval(intervalId);
+  }, [notificationPermission]);
+
+  const handleRequestPermission = async () => {
+    const granted = await requestNotificationPermission();
+    setNotificationPermission(granted ? 'granted' : 'denied');
+    if (granted) {
+      sendNotification("Notifications enabled! 💖", "You'll now be notified when your sparkles are due.");
+    }
+  };
+
+  const handleInstallApp = () => {
+    if (installPrompt) {
+      installPrompt.prompt();
+      installPrompt.userChoice.then((choiceResult: any) => {
+        if (choiceResult.outcome === 'accepted') {
+          setInstallPrompt(null);
+        }
+      });
+    } else {
+      // Open help modal for manual instructions (iOS or if prompt hidden)
+      setIsHelpOpen(true);
+    }
+  };
+
   const handleCreateOrUpdate = (data: ReminderFormData) => {
     if (editingReminder) {
       setReminders(reminders.map(r => r.id === editingReminder.id ? {
         ...r,
         ...data,
-        labels: data.labels.split(',').map(l => l.trim()).filter(Boolean)
+        labels: data.labels.split(',').map(l => l.trim()).filter(Boolean),
+        wasNotified: false // Reset notification if they change the time/details
       } : r));
     } else {
       const newReminder: Reminder = {
@@ -55,7 +129,8 @@ const App: React.FC = () => {
         ...data,
         labels: data.labels.split(',').map(l => l.trim()).filter(Boolean),
         isCompleted: false,
-        createdAt: Date.now()
+        createdAt: Date.now(),
+        wasNotified: false
       };
       setReminders([...reminders, newReminder]);
     }
@@ -208,11 +283,9 @@ const App: React.FC = () => {
   };
 
   const renderCalendarView = () => {
-    // Replaced startOfMonth(currentCalendarDate)
     const monthStart = new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth(), 1);
     const monthEnd = endOfMonth(currentCalendarDate);
     
-    // Replaced startOfWeek(monthStart) - assuming default Sunday start
     const startDate = new Date(monthStart);
     startDate.setDate(monthStart.getDate() - monthStart.getDay());
     
@@ -222,7 +295,6 @@ const App: React.FC = () => {
     const today = new Date();
 
     const nextMonth = () => setCurrentCalendarDate(addMonths(currentCalendarDate, 1));
-    // Replaced subMonths(currentCalendarDate, 1)
     const prevMonth = () => setCurrentCalendarDate(addMonths(currentCalendarDate, -1));
     const jumpToday = () => setCurrentCalendarDate(new Date());
 
@@ -303,8 +375,29 @@ const App: React.FC = () => {
             <div className="flex items-center gap-2">
                 <h1 className="font-display font-bold text-xl text-barbie-deep">BarbieRemind</h1>
             </div>
-            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-barbie-pink to-barbie-deep text-white flex items-center justify-center font-bold">
-                B
+            
+            <div className="flex items-center gap-3">
+              {/* Install / Help Button (Mobile) */}
+              <button 
+                onClick={handleInstallApp}
+                className={`w-8 h-8 rounded-full bg-white text-barbie-deep border border-barbie-soft flex items-center justify-center shadow-sm ${installPrompt ? 'animate-bounce' : ''}`}
+                title="Install App"
+              >
+                {installPrompt ? <Download size={16} /> : <HelpCircle size={16} />}
+              </button>
+
+              {/* Mobile Bell */}
+              {notificationPermission !== 'granted' && notificationPermission !== 'unsupported' && (
+                <button 
+                  onClick={handleRequestPermission}
+                  className="w-8 h-8 rounded-full bg-white text-barbie-pink border border-barbie-soft flex items-center justify-center shadow-sm"
+                >
+                  <BellOff size={16} />
+                </button>
+              )}
+              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-barbie-pink to-barbie-deep text-white flex items-center justify-center font-bold">
+                  B
+              </div>
             </div>
          </div>
          {/* Mobile Search Bar */}
@@ -329,6 +422,27 @@ const App: React.FC = () => {
           </div>
           
           <div className="flex gap-6 items-center">
+             {/* Install / Help Button (Desktop) */}
+            <button 
+              onClick={handleInstallApp}
+              className={`flex items-center gap-2 px-4 py-3 rounded-2xl ${installPrompt ? 'bg-barbie-deep text-white shadow-md' : 'bg-white text-barbie-muted border border-barbie-soft'} hover:opacity-90 transition-all font-medium text-sm`}
+            >
+                {installPrompt ? <Download size={18} /> : <HelpCircle size={18} />}
+                <span>{installPrompt ? 'Install App' : 'How to Install'}</span>
+            </button>
+
+            {/* Notification Permission Bell (Desktop) */}
+            {notificationPermission !== 'granted' && notificationPermission !== 'unsupported' && (
+               <button 
+                onClick={handleRequestPermission}
+                className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-barbie-pink/10 text-barbie-deep hover:bg-barbie-pink/20 transition-colors font-medium text-sm animate-pulse"
+                title="Enable Notifications"
+               >
+                 <Bell size={18} />
+                 <span>Enable Alerts</span>
+               </button>
+            )}
+
             {/* Desktop Statistics */}
             <div className="flex items-center gap-3 px-4 py-2 bg-white rounded-2xl shadow-sm border border-barbie-soft/50">
               <div className="w-10 h-10 rounded-full bg-yellow-50 flex items-center justify-center text-yellow-500">
@@ -368,7 +482,7 @@ const App: React.FC = () => {
         <Plus size={32} />
       </button>
 
-      {/* Modal */}
+      {/* Create/Edit Modal */}
       <Modal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
@@ -379,6 +493,50 @@ const App: React.FC = () => {
           onSave={handleCreateOrUpdate}
           onCancel={() => setIsModalOpen(false)}
         />
+      </Modal>
+
+      {/* Install Help Modal */}
+      <Modal
+        isOpen={isHelpOpen}
+        onClose={() => setIsHelpOpen(false)}
+        title="Get the App 📱"
+      >
+        <div className="space-y-6 text-barbie-neutral">
+           <p className="text-sm text-barbie-muted">
+             BarbieRemind is a web app that you can add directly to your home screen! No download store required.
+           </p>
+
+           <div className="bg-gray-50 p-4 rounded-xl border border-barbie-soft/50">
+              <h3 className="font-bold text-barbie-deep flex items-center gap-2 mb-2">
+                 <span>🍎</span> iPhone (iOS)
+              </h3>
+              <ol className="list-decimal list-inside text-sm space-y-2 text-barbie-neutral/80">
+                 <li>Tap the <strong>Share</strong> button <Share className="inline w-4 h-4 mx-1" /> in Safari.</li>
+                 <li>Scroll down and select <strong>Add to Home Screen</strong> <PlusSquare className="inline w-4 h-4 mx-1" />.</li>
+                 <li>Tap <strong>Add</strong> in the top right.</li>
+              </ol>
+           </div>
+
+           <div className="bg-gray-50 p-4 rounded-xl border border-barbie-soft/50">
+              <h3 className="font-bold text-barbie-deep flex items-center gap-2 mb-2">
+                 <span>🤖</span> Android
+              </h3>
+              <ol className="list-decimal list-inside text-sm space-y-2 text-barbie-neutral/80">
+                 <li>Tap the <strong>Menu</strong> icon <MoreVertical className="inline w-4 h-4 mx-1" /> in Chrome.</li>
+                 <li>Select <strong>Install App</strong> or <strong>Add to Home Screen</strong>.</li>
+                 <li>Follow the prompts to install.</li>
+              </ol>
+           </div>
+           
+           <div className="text-center pt-2">
+              <button 
+                onClick={() => setIsHelpOpen(false)}
+                className="text-barbie-pink text-sm font-semibold hover:underline"
+              >
+                Got it, thanks!
+              </button>
+           </div>
+        </div>
       </Modal>
     </div>
   );

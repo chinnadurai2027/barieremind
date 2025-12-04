@@ -10,6 +10,7 @@ export interface Reminder {
   labels: string[];
   color?: string; // Hex code
   createdAt: number;
+  wasNotified?: boolean;
 }
 
 export type ViewState = 'today' | 'calendar' | 'completed';
